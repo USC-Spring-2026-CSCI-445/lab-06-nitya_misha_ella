@@ -476,7 +476,10 @@ class ObstacleAvoidingWaypointController:
 
         current_waypoint_idx = 0
         distance_from_wall_safety = 1.0
-        cone_angle = radians(15)
+        cone_angle = radians(5)
+        avoiding_obstacle = False
+        avoid_start_time = 0.0
+        min_avoid_duration = 3.0  # stay in wall-follow mode for at least this many seconds
 
         while not rospy.is_shutdown():
 
@@ -487,23 +490,37 @@ class ObstacleAvoidingWaypointController:
             # Travel through waypoints, checking if there is an obstacle in the way. Transition to obstacle avoidance if necessary
             ######### Your code starts here #########
             if current_waypoint_idx >= len(self.waypoints):
-                # stop robot 
+                # stop robot
                 ctrl_msg = Twist()
                 ctrl_msg.linear.x = 0.0
                 ctrl_msg.angular.z = 0.0
                 self.robot_ctrl_pub.publish(ctrl_msg)
                 rospy.loginfo("All waypoints reached!")
                 break
-            
 
-            ## select the goal 
+
+            ## select the goal
             goal = self.waypoints[current_waypoint_idx]
-            
+
             distances = self.laserscan_distances_to_point(goal, cone_angle)
-            if len(distances) > 0 and min(distances) < distance_from_wall_safety:
-                #     ## obstacle avoiding control !
+            obstacle_detected = len(distances) > 0 and min(distances) < distance_from_wall_safety
+
+            # enter obstacle avoidance mode
+            if obstacle_detected and not avoiding_obstacle:
+                avoiding_obstacle = True
+                avoid_start_time = rospy.get_time()
+                rospy.loginfo("Obstacle detected! Switching to wall following.")
+
+            # exit obstacle avoidance only after minimum duration and path is clear
+            if avoiding_obstacle:
+                time_in_avoid = rospy.get_time() - avoid_start_time
+                if time_in_avoid > min_avoid_duration and not obstacle_detected:
+                    avoiding_obstacle = False
+                    rospy.loginfo("Path clear. Resuming waypoint tracking.")
+
+            if avoiding_obstacle:
                 self.obstacle_avoiding_control()
-            else: 
+            else:
                 result = self.waypoint_tracking_control(goal)
 
                 if result is None:
