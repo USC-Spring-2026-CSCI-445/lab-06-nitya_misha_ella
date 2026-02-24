@@ -197,24 +197,23 @@ class ObstacleFreeWaypointController:
         ######### CODE FROM LAB 5 BELOW #########
 
         ## update self.goal position to be from the parameter goal position
-        dx = self.goal_position["x"] - self.current_position["x"]
-        dy = self.goal_position["y"] - self.current_position["y"]
+        dx = goal_position["x"] - self.current_position["x"]
+        dy = goal_position["y"] - self.current_position["y"]
         
         #dist = sqrt(dx^2 + dy^2)
-        distance_error = math.sqrt(dx**2+dy**2)
+        distance_error = sqrt(dx**2+dy**2)
         
         #angle = arctan(dy/dx)
-        goal_angle = math.atan2(dy, dx)
+        goal_angle = atan2(dy, dx)
         current_angle = self.current_position["theta"]
 
         angle_error = goal_angle - current_angle
-        ##### this error check was from lab 5 -- still needed? #####
 
         # Ensure angle error is within -pi to pi range
-        if angle_error > math.pi:
-            angle_error -= 2 * math.pi
-        elif angle_error < -math.pi:
-            angle_error += 2 * math.pi
+        if angle_error > pi:
+            angle_error -= 2 * pi
+        elif angle_error < -pi:
+            angle_error += 2 * pi
         ######### Your code ends here #########
 
         return distance_error, angle_error
@@ -230,7 +229,39 @@ class ObstacleFreeWaypointController:
 
             # Travel through waypoints one at a time, checking if robot is close enough
             ######### Your code starts here #########
-    
+            if current_waypoint_idx >= len(self.waypoints):
+                # stop robot 
+                ctrl_msg.linear.x = 0.0
+                ctrl_msg.angular.z = 0.0
+                self.robot_ctrl_pub.publish(ctrl_msg)
+                rospy.loginfo("All waypoints reached!")
+                break
+            
+
+            ## select the goal 
+            goal = self.waypoints[current_waypoint_idx]
+            error = self.calculate_error(goal)
+
+            if error is None:
+                rate.sleep()
+                continue
+            
+            distance_error, angle_error = error
+            
+            #if error is small
+            if abs(distance_error) < 0.05:
+                rospy.loginfo(f"Reached waypoint {current_waypoint_idx}: {goal}")
+                current_waypoint_idx += 1
+                continue
+            
+            t = rospy.get_time()
+            omega = self.angular_controller.control(angle_error, t) #calls the control method in the PID controller class that internally computes ω = kP*error + kI*integral + kD*derivative
+            ctrl_msg.angular.z = omega
+            ctrl_msg.linear.x = self.v0
+            
+            #publish
+            self.robot_ctrl_pub.publish(ctrl_msg)
+
             ######### Your code ends here #########
             rate.sleep()
 
