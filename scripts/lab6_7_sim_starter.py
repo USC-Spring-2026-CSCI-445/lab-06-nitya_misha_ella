@@ -300,7 +300,7 @@ class ObstacleAvoidingWaypointController:
         self.wall_follow_controller = PDController(kP=kP, kD=kD, kS=kS, u_min=u_min, u_max=u_max)
         self.goal_angular_controller = PIDController(kP=kP, kI=kI, kD=kD, kS=kS, u_min=u_min, u_max=u_max)
 
-        self.v0 = 0.2 #base forward velocity
+        self.v0 = 0.1 #base forward velocity
         ######### Your code ends here #########
 
     def robot_laserscan_callback(self, msg: LaserScan):
@@ -384,7 +384,7 @@ class ObstacleAvoidingWaypointController:
         err = self.wall_following_desired_distance - self.ir_distance
         t = rospy.get_time()
         u = self.wall_follow_controller.control(err, t)
-        ctrl_msg.linear.x = 0.20
+        ctrl_msg.linear.x = self.v0
         ctrl_msg.angular.z = u
 
         ######### Your code ends here #########
