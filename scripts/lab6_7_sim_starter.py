@@ -298,8 +298,9 @@ class ObstacleAvoidingWaypointController:
         u_max = 1.5
 
         self.wall_follow_controller = PDController(kP=kP, kD=kD, kS=kS, u_min=u_min, u_max=u_max)
-        self.goal_angular_controller = PIDController(kP=kP, kD=kD, kI=kI, kS=kS, u_min=u_min, u_max=u_max)
+        self.goal_angular_controller = PIDController(kP=kP, kI=kI, kD=kD, kS=kS, u_min=u_min, u_max=u_max)
 
+        self.v0 = 0.2 #base forward velocity
         ######### Your code ends here #########
 
     def robot_laserscan_callback(self, msg: LaserScan):
@@ -331,12 +332,44 @@ class ObstacleAvoidingWaypointController:
             return None
 
         ######### Your code starts here #########
+        
+        dx = goal_position["x"] - self.current_position["x"]
+        dy = goal_position["y"] - self.current_position["y"]
+
+        distance_error = sqrt(dx**2 + dy**2)
+
+        goal_angle = atan2(dy, dx)
+        current_angle = self.current_position["theta"]
+
+        angle_error = goal_angle - current_angle
+
+        # Ensure angle error is within -pi to pi range
+        if angle_error > pi:
+            angle_error -= 2 * pi
+        elif angle_error < -pi:
+            angle_error += 2 * pi
+
+        ctrl_msg = Twist()
+
+        t = rospy.get_time()
+        omega = self.goal_angular_controller.control(angle_error, t)
+
+        cmd_linear_vel = self.v0
+        cmd_angular_vel = omega
+        ctrl_msg.angular.z = cmd_angular_vel
+        ctrl_msg.linear.x = cmd_linear_vel
+
+        self.robot_ctrl_pub.publish(ctrl_msg)
 
         ######### Your code ends here #########
 
         rospy.loginfo(
             f"distance to target: {distance_error:.2f}\tangle error: {angle_error:.2f}\tcommanded linear vel: {cmd_linear_vel:.2f}\tcommanded angular vel: {cmd_angular_vel:.2f}"
         )
+
+        ## added this as well: 
+        return distance_error
+
 
     def obstacle_avoiding_control(self, visualize: bool = True):
 
@@ -453,6 +486,33 @@ class ObstacleAvoidingWaypointController:
 
             # Travel through waypoints, checking if there is an obstacle in the way. Transition to obstacle avoidance if necessary
             ######### Your code starts here #########
+            if current_waypoint_idx >= len(self.waypoints):
+                # stop robot 
+                ctrl_msg = Twist()
+                ctrl_msg.linear.x = 0.0
+                ctrl_msg.angular.z = 0.0
+                self.robot_ctrl_pub.publish(ctrl_msg)
+                rospy.loginfo("All waypoints reached!")
+                break
+            
+
+            ## select the goal 
+            goal = self.waypoints[current_waypoint_idx]
+            
+            distances = self.laserscan_distances_to_point(goal, cone_angle)
+            if len(distances) > 0 and min(distances) < distance_from_wall_safety:
+                #     ## obstacle avoiding control !
+                self.obstacle_avoiding_control()
+            else: 
+                result = self.waypoint_tracking_control(goal)
+
+                if result is None:
+                    rate.sleep()
+                    continue
+
+                if result < 0.05:
+                    rospy.loginfo(f"Reached waypoint {current_waypoint_idx}: {goal}")
+                    current_waypoint_idx += 1
 
             ######### Your code ends here #########
             rate.sleep()
