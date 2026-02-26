@@ -307,7 +307,7 @@ class ObstacleAvoidingWaypointController:
     raw = state.cliff
     # Calculation from raw sensor readings to distance (use equation from Lab 2)
     ######### Your code starts here #########
-
+    distance = 3116.522296 * (raw ** -1.594097)
     ######### Your code ends here #########
     self.ir_distance = distance
 
