@@ -513,7 +513,7 @@ class ObstacleAvoidingWaypointController:
             # enter obstacle avoidance mode
             if obstacle_detected:
                 rospy.loginfo("Obstacle detected! Switching to wall following.")
-                left_distance = min(self.scan.ranges[80:100])
+                left_distance = min(self.laserscan.ranges[80:100])
                 if left_distance < 0.5:
                     self.obstacle_avoiding_control()
                 else:
