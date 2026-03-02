@@ -540,7 +540,7 @@ class ObstacleAvoidingWaypointController:
             elif state == State.ROTATING:
                 # actions 
                 ctrl_msg = Twist()
-                ctrl_msg.linear.x = 0.0
+                ctrl_msg.linear.x = 0.1 # approach the wall just a bit while rotating
                 ctrl_msg.angular.z = -0.5  # Rotate clockwise in place to put obstacle on left (where the ir sensor is)
                 self.robot_ctrl_pub.publish(ctrl_msg)
 
