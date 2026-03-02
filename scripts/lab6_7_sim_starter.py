@@ -544,10 +544,10 @@ class ObstacleAvoidingWaypointController:
                 ctrl_msg.angular.z = -0.5  # Rotate clockwise in place to put obstacle on left (where the ir sensor is)
                 self.robot_ctrl_pub.publish(ctrl_msg)
 
-                # check if state shd be updated (fyi self.laserscan.ranges wont be updated yet by the time u get here so you'll end up overshooting rotation just a bit, luckily ur not rotating significantly each iteration)
-                left_ranges = [x for x in self.laserscan.ranges[80:100] if not isinf(x)] 
-                if len(left_ranges) > 0 and min(left_ranges) < 1.0:
+                # check if state shd be updated
+                if self.ir_distance is not None and self.ir_distance < 1.0:
                     state = State.AVOIDING_OBSTACLE
+
 
 
             elif state == State.AVOIDING_OBSTACLE: 
