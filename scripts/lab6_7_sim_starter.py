@@ -511,8 +511,11 @@ class ObstacleAvoidingWaypointController:
             goal = self.waypoints[current_waypoint_idx]
             distances = self.laserscan_distances_to_point(goal, cone_angle) # even in og code u do this only once per iter
             obstacle_detected = len(distances) > 0 and min(distances) < distance_from_wall_safety
-
-
+            # EXITING obstacle avoidance (wider front check, ~60° in front of the robot, 30° each side)
+            # this prevents the S-pattern because even when the wall slips out of the narrow goal cone, it's still within the wider 60° front window, so the robot stays in wall-following mode until it's truly past the obstacle.
+            front_ranges = [x for x in self.laserscan.ranges[0:30] if not isinf(x)] + \
+                        [x for x in self.laserscan.ranges[330:360] if not isinf(x)]
+            front_clear = len(front_ranges) == 0 or min(front_ranges) > distance_from_wall_safety
 
             # -- state transition checks + actions --
             if state == State.NAVIGATING_TO_WAYPOINT:
@@ -551,7 +554,7 @@ class ObstacleAvoidingWaypointController:
                 self.obstacle_avoiding_control()
 
                 # check if state shd be updated
-                if not obstacle_detected:
+                if not obstacle_detected and front_clear:
                     state = State.NAVIGATING_TO_WAYPOINT
 
             rate.sleep()
