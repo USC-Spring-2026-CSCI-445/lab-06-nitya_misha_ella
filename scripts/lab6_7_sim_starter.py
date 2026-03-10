@@ -12,7 +12,7 @@ from sensor_msgs.msg import LaserScan, PointCloud, ChannelFloat32
 from visualization_msgs.msg import MarkerArray, Marker
 from tf.transformations import euler_from_quaternion
 from std_msgs.msg import ColorRGBA
-from enum import Enum, auto
+
 
 OBS_FREE_WAYPOINTS = [
     {"x": 1, "y": 1},
@@ -25,12 +25,6 @@ W_OBS_WAYPOINTS = [
     {"x": 4, "y": 1},
     {"x": 0, "y": 3.0},
 ]
-
-class State(Enum):
-    NAVIGATING_TO_WAYPOINT = auto()
-    ROTATING = auto()
-    AVOIDING_OBSTACLE = auto()
-    DONE = auto()
 
 
 def angle_to_0_to_2pi(angle: float) -> float:
@@ -303,19 +297,11 @@ class ObstacleAvoidingWaypointController:
         u_min = -1.5
         u_max = 1.5
 
-        self.wall_follow_controller = PDController(kP=0.5, kD=0.05, kS=kS, u_min=-2, u_max=2)
+        self.wall_follow_controller = PDController(kP=1.0, kD=0.15, kS=kS, u_min=-2, u_max=2)
         self.goal_angular_controller = PIDController(kP=kP, kI=kI, kD=kD, kS=kS, u_min=u_min, u_max=u_max)
 
         self.v0 = 0.1 #base forward velocity
         ######### Your code ends here #########
-
-    def sensor_state_callback(self, state):
-        raw = state.cliff
-        # Calculation from raw sensor readings to distance (use equation from Lab 2)
-        ######### Your code starts here #########
-        distance = 3116.522296 * (raw ** -1.594097)
-        ######### Your code ends here #########
-        self.ir_distance = distance
 
     def robot_laserscan_callback(self, msg: LaserScan):
         self.laserscan = msg
@@ -390,17 +376,27 @@ class ObstacleAvoidingWaypointController:
         ctrl_msg = Twist()
 
         ######### Your code starts here #########
-        if self.ir_distance is None:
-            print("Waiting for IR sensor readings")
-            sleep(0.1)
+        if self.laserscan_angles is not None:
+            n = len(self.laserscan.ranges)
+            rospy.loginfo_once(f"Total scan ranges: {n}, angle at index 90: {degrees(self.laserscan_angles[90]):.1f} deg")
+
+        if self.laserscan is not None:
+            raw_left = list(self.laserscan.ranges[80:100])
+            print(f"ir_dist={self.ir_distance}  raw[80:100]={[round(x,2) for x in raw_left[:5]]}...")
+
+        if self.ir_distance is None or self.ir_distance > 1.5:
+            # wall not on left yet — move forward while turning right to find it
+            ctrl_msg.angular.z = -0.3
+            ctrl_msg.linear.x = self.v0
+            self.robot_ctrl_pub.publish(ctrl_msg)
+            print("Turning right to find wall on left side...")
             return
-            
+
         err = self.wall_following_desired_distance - self.ir_distance
         t = rospy.get_time()
         u = self.wall_follow_controller.control(err, t)
         ctrl_msg.linear.x = self.v0
-        ctrl_msg.angular.z = u
-
+        ctrl_msg.angular.z = u  # don't negate because u is already a negative value !
         ######### Your code ends here #########
 
         self.robot_ctrl_pub.publish(ctrl_msg)
@@ -486,40 +482,52 @@ class ObstacleAvoidingWaypointController:
         return filtered
 
     def control_robot(self):
-
         rate = rospy.Rate(10)  # 20 Hz
-        state = State.NAVIGATING_TO_WAYPOINT
+
         current_waypoint_idx = 0
         distance_from_wall_safety = 1.0
-        cone_angle = radians(20)
+        cone_angle = radians(5)
+        in_obstacle_avoidance = False
+        obstacle_clear_count = 0
 
-        # guard against empty waypoints list 
-        if current_waypoint_idx >= len(self.waypoints):
-            state = State.DONE
+        while not rospy.is_shutdown():
 
-        while not rospy.is_shutdown() and state != State.DONE:
-
-            # Travel through waypoints, checking if there is an obstacle in the way. Transition to obstacle avoidance if necessary
-            ######### Your code starts here #########
-
-            # -- precondition guards --
             if self.current_position is None or self.laserscan is None:
                 sleep(0.01)
                 continue
 
-            # -- shared sensor computations --
-            goal = self.waypoints[current_waypoint_idx]
-            distances = self.laserscan_distances_to_point(goal, cone_angle) # even in og code u do this only once per iter
-            obstacle_detected = len(distances) > 0 and min(distances) < distance_from_wall_safety
-            # EXITING obstacle avoidance (wider front check, ~60° in front of the robot, 30° each side)
-            # this prevents the S-pattern because even when the wall slips out of the narrow goal cone, it's still within the wider 60° front window, so the robot stays in wall-following mode until it's truly past the obstacle.
-            front_ranges = [x for x in self.laserscan.ranges[0:30] if not isinf(x)] + \
-                        [x for x in self.laserscan.ranges[330:360] if not isinf(x)]
-            front_clear = len(front_ranges) == 0 or min(front_ranges) > distance_from_wall_safety
+            # Travel through waypoints, checking if there is an obstacle in the way. Transition to obstacle avoidance if necessary
+            ######### Your code starts here #########
+            if current_waypoint_idx >= len(self.waypoints):
+                # stop robot
+                ctrl_msg = Twist()
+                ctrl_msg.linear.x = 0.0
+                ctrl_msg.angular.z = 0.0
+                self.robot_ctrl_pub.publish(ctrl_msg)
+                rospy.loginfo("All waypoints reached!")
+                break
 
-            # -- state transition checks + actions --
-            if state == State.NAVIGATING_TO_WAYPOINT:
-                # actions 
+
+            ## select the goal
+            goal = self.waypoints[current_waypoint_idx]
+
+            distances = self.laserscan_distances_to_point(goal, cone_angle)
+            obstacle_detected = len(distances) > 0 and min(distances) < distance_from_wall_safety
+
+            # enter obstacle avoidance mode
+            if obstacle_detected:
+                in_obstacle_avoidance = True
+                obstacle_clear_count = 0
+                rospy.loginfo("Obstacle detected! Switching to wall following.")
+                self.obstacle_avoiding_control()
+            elif in_obstacle_avoidance:
+                obstacle_clear_count += 1
+                if obstacle_clear_count >= 20:
+                    in_obstacle_avoidance = False
+                    rospy.loginfo("Obstacle cleared! Resuming waypoint tracking.")
+                else:
+                    self.obstacle_avoiding_control()
+            else:
                 result = self.waypoint_tracking_control(goal)
 
                 if result is None:
@@ -530,46 +538,8 @@ class ObstacleAvoidingWaypointController:
                     rospy.loginfo(f"Reached waypoint {current_waypoint_idx}: {goal}")
                     current_waypoint_idx += 1
 
-                # check if state shd be updated
-                if obstacle_detected:
-                    rospy.loginfo("Obstacle detected! rotating to align wall to left.")
-                    state = State.ROTATING
-                if current_waypoint_idx >= len(self.waypoints):
-                    state = State.DONE
-
-            elif state == State.ROTATING:
-                # actions 
-                ctrl_msg = Twist()
-                ctrl_msg.linear.x = 0.1 # approach the wall just a bit while rotating
-                ctrl_msg.angular.z = -0.5  # Rotate clockwise in place to put obstacle on left (where the ir sensor is)
-                self.robot_ctrl_pub.publish(ctrl_msg)
-
-                # check if state shd be updated (fyi self.laserscan.ranges wont be updated yet by the time u get here so you'll end up overshooting rotation just a bit, luckily ur not rotating significantly each iteration)
-                left_ranges = [x for x in self.laserscan.ranges[80:100] if not isinf(x)] 
-                if len(left_ranges) > 0 and min(left_ranges) < 1.0:
-                    state = State.AVOIDING_OBSTACLE
-
-
-            elif state == State.AVOIDING_OBSTACLE: 
-                self.obstacle_avoiding_control()
-
-                # check if state shd be updated
-                  # exit only when path to goal is clear AND wall is no longer on the left
-                wall_on_left = self.ir_distance is not None and self.ir_distance < distance_from_wall_safety
-                if not obstacle_detected and not wall_on_left and front_clear:
-                    state = State.NAVIGATING_TO_WAYPOINT
-
+            ######### Your code ends here #########
             rate.sleep()
-        
-        # while loop automatically breaks when state is set to done, keep terminal state actions outside of loop
-        # stop robot
-        ctrl_msg = Twist()
-        ctrl_msg.linear.x = 0.0
-        ctrl_msg.angular.z = 0.0
-        self.robot_ctrl_pub.publish(ctrl_msg)
-        rospy.loginfo("All waypoints reached!")
-
-        ######### Your code ends here #########
 
 
 """ Example usage
