@@ -249,7 +249,7 @@ class ObstacleFreeWaypointController:
             distance_error, angle_error = error
             
             #if error is small
-            if abs(distance_error) < 0.05:
+            if abs(distance_error) < 0.15:
                 rospy.loginfo(f"Reached waypoint {current_waypoint_idx}: {goal}")
                 current_waypoint_idx += 1
                 continue
@@ -542,7 +542,7 @@ class ObstacleAvoidingWaypointController:
                     rate.sleep()
                     continue
 
-                if result < 0.05:
+                if result < 0.15:
                     rospy.loginfo(f"Reached waypoint {current_waypoint_idx}: {goal}")
                     current_waypoint_idx += 1
 
